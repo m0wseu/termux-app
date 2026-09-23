@@ -1,5 +1,8 @@
 name: Trigger Termux Library Builds on Jitpack
 
+permissions:
+  contents: read
+
 on:
   release:
     types:
