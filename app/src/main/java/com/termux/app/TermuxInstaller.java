@@ -179,8 +179,16 @@ final class TermuxInstaller {
                                 }
                             } else {
                                 String zipEntryName = zipEntry.getName();
-                                File targetFile = new File(TERMUX_STAGING_PREFIX_DIR_PATH, zipEntryName);
+                                File stagingPrefixDir = TERMUX_STAGING_PREFIX_DIR.getCanonicalFile();
+                                File targetFile = new File(stagingPrefixDir, zipEntryName).getCanonicalFile();
                                 boolean isDirectory = zipEntry.isDirectory();
+
+                                String stagingPrefixPath = stagingPrefixDir.getPath();
+                                String targetPath = targetFile.getPath();
+                                if (!targetPath.equals(stagingPrefixPath) &&
+                                    !targetPath.startsWith(stagingPrefixPath + File.separator)) {
+                                    throw new SecurityException("Invalid zip entry path: " + zipEntryName);
+                                }
 
                                 error = ensureDirectoryExists(isDirectory ? targetFile : targetFile.getParentFile());
                                 if (error != null) {
