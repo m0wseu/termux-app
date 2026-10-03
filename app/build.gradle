@@ -122,9 +122,9 @@ android {
         }
     }
 
-    packagingOptions {
+    packaging {
         jniLibs {
-            useLegacyPackaging true
+            useLegacyPackaging false
         }
     }
     
@@ -134,12 +134,12 @@ android {
             def abi = output.filters.find { it.filterType == 'ABI' }?.identifier
             def buildName = variant.buildType
             def tag = (project.hasProperty('apkVersionTag') && apkVersionTag) ? apkVersionTag : "${project.ext.packageVariant}-${buildName}"
-            def arch = abi ? abi : "universal"
+            def arch = abi ?: (output.outputType.name().toLowerCase().contains("universal") ? "universal" : "all")
+
             output.outputFileName.set("termux-app_${tag}_${arch}.apk")
         }
     })
 }
-
 
     buildFeatures {
         buildConfig true
