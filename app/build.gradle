@@ -237,8 +237,11 @@ task downloadBootstraps() {
     }
 }
 
-afterEvaluate {
-    android.applicationVariants.all { variant ->
-        variant.javaCompileProvider.get().dependsOn(downloadBootstraps)
-    }
+androidComponents {
+    onVariants(selector().all(), { variant ->
+        tasks.matching { it.name == "compile${variant.name.capitalize()}JavaWithJavac" }.configureEach {
+            dependsOn(downloadBootstraps)
+        }
+    })
 }
+
