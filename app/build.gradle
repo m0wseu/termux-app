@@ -127,15 +127,19 @@ android {
             useLegacyPackaging true
         }
     }
-        project.extensions.getByType(com.android.build.gradle.AppExtension).applicationVariants.all { variant ->
-        variant.outputs.all { output ->
-            def abi = output.getFilter(com.android.build.OutputFile.ABI)
-            def buildName = variant.buildType.name
+    
+        androidComponents {
+    onVariants(selector().all(), { variant ->
+        variant.outputs.each { output ->
+            def abi = output.filters.find { it.filterType == 'ABI' }?.identifier
+            def buildName = variant.buildType
             def tag = (project.hasProperty('apkVersionTag') && apkVersionTag) ? apkVersionTag : "${project.ext.packageVariant}-${buildName}"
             def arch = abi ? abi : "universal"
-            outputFileName = "termux-app_${tag}_${arch}.apk"
+            output.outputFileName.set("termux-app_${tag}_${arch}.apk")
         }
-    }
+    })
+}
+
 
     buildFeatures {
         buildConfig true
