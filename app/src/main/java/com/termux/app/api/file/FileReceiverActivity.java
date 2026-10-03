@@ -198,6 +198,27 @@ public class FileReceiverActivity extends AppCompatActivity {
             });
     }
 
+    private File getValidatedOutputFile(File receiveDir, String attachmentFileName) throws IOException {
+        String fileName = attachmentFileName == null ? null : attachmentFileName.trim();
+        if (DataUtils.isNullOrEmpty(fileName)) return null;
+
+        if (".".equals(fileName) || "..".equals(fileName) || fileName.contains("/") || fileName.contains("\\")) {
+            return null;
+        }
+
+        File candidate = new File(receiveDir, fileName);
+        File canonicalReceiveDir = receiveDir.getCanonicalFile();
+        File canonicalCandidate = candidate.getCanonicalFile();
+
+        String receivePath = canonicalReceiveDir.getPath();
+        String candidatePath = canonicalCandidate.getPath();
+        if (!candidatePath.equals(receivePath) && !candidatePath.startsWith(receivePath + File.separator)) {
+            return null;
+        }
+
+        return canonicalCandidate;
+    }
+
     public File saveStreamWithName(InputStream in, String attachmentFileName) {
         File receiveDir = new File(TERMUX_RECEIVEDIR);
 
@@ -212,7 +233,12 @@ public class FileReceiverActivity extends AppCompatActivity {
         }
 
         try {
-            final File outFile = new File(receiveDir, attachmentFileName);
+            final File outFile = getValidatedOutputFile(receiveDir, attachmentFileName);
+            if (outFile == null) {
+                showErrorDialogAndQuit("Invalid file name");
+                return null;
+            }
+
             try (FileOutputStream f = new FileOutputStream(outFile)) {
                 byte[] buffer = new byte[4096];
                 int readBytes;
