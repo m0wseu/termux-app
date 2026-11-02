@@ -28,10 +28,14 @@ public class TermuxUrlUtils {
         regex_sb.append("imap(?:s?)|");             // The IMAP proto.
         regex_sb.append("irc(?:[6s]?)|");           // The IRC proto.
         regex_sb.append("ip[fn]s|");                // The IPFS proto.
+        regex_sb.append("jabber|");                 // The Jabber proto.
         regex_sb.append("ldap(?:s?)|");             // The LDAP proto.
+        regex_sb.append("nfs|");                    // The NFS proto.
+        regex_sb.append("nzblnk|");                 // The NZBLNK proto.
         regex_sb.append("pop3(?:s?)|");             // The POP3 proto.
         regex_sb.append("redis(?:s?)|");            // The Redis proto.
         regex_sb.append("rsync|");                  // The Rsync proto.
+        regex_sb.append("rtmp|");                   // The RTMP proto.
         regex_sb.append("rtsp(?:[su]?)|");          // The RTSP proto.
         regex_sb.append("sftp|");                   // The SFTP proto.
         regex_sb.append("smb(?:s?)|");              // The SAMBA proto.
