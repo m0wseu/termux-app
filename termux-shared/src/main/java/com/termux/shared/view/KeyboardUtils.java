@@ -44,8 +44,15 @@ public class KeyboardUtils {
     public static void toggleSoftKeyboard(final Context context) {
         if (context == null) return;
         InputMethodManager inputMethodManager = (InputMethodManager) context.getSystemService(Context.INPUT_METHOD_SERVICE);
-        if (inputMethodManager != null)
-            inputMethodManager.toggleSoftInput(InputMethodManager.SHOW_FORCED, 0);
+        if (inputMethodManager != null) {
+            try {
+                inputMethodManager.toggleSoftInput(InputMethodManager.SHOW_FORCED, 0);
+            } catch (RuntimeException e) {
+                // Some Android builds throw from the system InputMethodManagerService (for
+                // example an NPE in isImeClientFocused()). Do not crash the app for it.
+                Logger.logStackTraceWithMessage(LOG_TAG, "Failed to toggle soft keyboard", e);
+            }
+        }
     }
 
     /**
@@ -67,15 +74,27 @@ public class KeyboardUtils {
     public static void showSoftKeyboard(final Context context, final View view) {
         if (context == null || view == null) return;
         InputMethodManager inputMethodManager = (InputMethodManager) context.getSystemService(Context.INPUT_METHOD_SERVICE);
-        if (inputMethodManager != null)
-            inputMethodManager.showSoftInput(view, 0);
+        if (inputMethodManager != null) {
+            try {
+                inputMethodManager.showSoftInput(view, 0);
+            } catch (RuntimeException e) {
+                // Framework bug on some ROMs, see the toggleSoftKeyboard() comment.
+                Logger.logStackTraceWithMessage(LOG_TAG, "Failed to show soft keyboard", e);
+            }
+        }
     }
 
     public static void hideSoftKeyboard(final Context context, final View view) {
         if (context == null || view == null) return;
         InputMethodManager inputMethodManager = (InputMethodManager) context.getSystemService(Context.INPUT_METHOD_SERVICE);
-        if (inputMethodManager != null)
-            inputMethodManager.hideSoftInputFromWindow(view.getWindowToken(), 0);
+        if (inputMethodManager != null) {
+            try {
+                inputMethodManager.hideSoftInputFromWindow(view.getWindowToken(), 0);
+            } catch (RuntimeException e) {
+                // Framework bug on some ROMs, see the toggleSoftKeyboard() comment.
+                Logger.logStackTraceWithMessage(LOG_TAG, "Failed to hide soft keyboard", e);
+            }
+        }
     }
 
     public static void disableSoftKeyboard(final Activity activity, final View view) {

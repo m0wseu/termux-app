@@ -25,6 +25,7 @@ import com.termux.shared.theme.NightMode;
 import com.termux.shared.theme.ThemeUtils;
 import com.termux.terminal.TerminalSession;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public class TermuxSessionsListViewController extends ArrayAdapter<TermuxSession> implements AdapterView.OnItemClickListener, AdapterView.OnItemLongClickListener {
@@ -35,8 +36,24 @@ public class TermuxSessionsListViewController extends ArrayAdapter<TermuxSession
     final StyleSpan italicSpan = new StyleSpan(Typeface.ITALIC);
 
     public TermuxSessionsListViewController(TermuxActivity activity, List<TermuxSession> sessionList) {
-        super(activity.getApplicationContext(), R.layout.item_terminal_sessions_list, sessionList);
+        // Keep our own snapshot of the list. The service mutates its session list from background
+        // threads, so sharing the live list with the adapter can make ListView see a different
+        // item count between layout passes and crash with "The content of the adapter has changed
+        // but ListView did not receive a notification".
+        super(activity.getApplicationContext(), R.layout.item_terminal_sessions_list, new ArrayList<>(sessionList));
         this.mActivity = activity;
+    }
+
+    /**
+     * Replace the displayed sessions with a snapshot of the service's session list. Must be called
+     * on the UI thread, and must be followed by a {@link #notifyDataSetChanged()} (which this
+     * method does) so that ListView is notified before it reads the new items.
+     */
+    public void updateSessions(List<TermuxSession> sessions) {
+        setNotifyOnChange(false);
+        clear();
+        addAll(sessions);
+        notifyDataSetChanged();
     }
 
     @SuppressLint("SetTextI18n")
