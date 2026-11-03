@@ -76,13 +76,31 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Import signing key
+        shell: bash {0}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.TERMUX_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "TERMUX_KEYSTORE_BASE64 secret is not set" >&2
+            exit 1
+          fi
+          KEYSTORE_PATH="$RUNNER_TEMP/termux-release.jks"
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
+          echo "TERMUX_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+          echo "Keystore written to $KEYSTORE_PATH"
+
       - name: Build APKs
         shell: bash {0}
+        env:
+          TERMUX_KEYSTORE_PASSWORD: ${{ secrets.TERMUX_KEYSTORE_PASSWORD }}
+          TERMUX_KEY_ALIAS: ${{ secrets.TERMUX_KEY_ALIAS }}
+          TERMUX_KEY_PASSWORD: ${{ secrets.TERMUX_KEY_PASSWORD }}
         run: |
           exit_on_error() { echo "$1"; exit 1; }
 
-          APK_DIR_PATH="./app/build/outputs/apk/debug"
-          APK_VERSION_TAG="$VERSION+$PACKAGE_VARIANT-github-debug"
+          APK_DIR_PATH="./app/build/outputs/apk/release"
+          APK_VERSION_TAG="$VERSION+$PACKAGE_VARIANT-github-release"
           APK_BASENAME_PREFIX="termux-app_$APK_VERSION_TAG"
 
           if ! printf "%s" "${APK_VERSION_TAG/v/}" | grep -qP '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$'; then
@@ -92,7 +110,8 @@ jobs:
           echo "Building APKs for '$APK_VERSION_TAG'"
           export TERMUX_APK_VERSION_TAG="$APK_VERSION_TAG"
           export TERMUX_PACKAGE_VARIANT="$PACKAGE_VARIANT"
-          if ! ./gradlew assembleDebug; then
+          export TERMUX_SPLIT_APKS_FOR_RELEASE_BUILDS="1"
+          if ! ./gradlew assembleRelease; then
             exit_on_error "Build failed for '$APK_VERSION_TAG'."
           fi
 
@@ -114,18 +133,38 @@ jobs:
             exit_on_error "Generate sha256sums failed for '$APK_VERSION_TAG'."
           fi
 
+      - name: Verify APK signatures
+        shell: bash {0}
+        run: |
+          exit_on_error() { echo "$1"; exit 1; }
+
+          APK_DIR_PATH="./app/build/outputs/apk/release"
+          APK_BASENAME_PREFIX="termux-app_$VERSION+$PACKAGE_VARIANT-github-release"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
+          echo "Using $APKSIGNER"
+
+          for abi in universal arm64-v8a armeabi-v7a x86_64 x86; do
+            apk="$APK_DIR_PATH/${APK_BASENAME_PREFIX}_$abi.apk"
+            if ! "$APKSIGNER" verify --print-certs "$apk" > /dev/null 2>&1; then
+              exit_on_error "APK is not signed: $apk"
+            fi
+          done
+
+          echo "All APKs are signed. Certificate:"
+          "$APKSIGNER" verify --print-certs "$APK_DIR_PATH/${APK_BASENAME_PREFIX}_universal.apk" | head -n 4
+
       - name: Upload APKs
         uses: actions/upload-artifact@v5
         with:
           name: apks-${{ matrix.package_variant }}
-          path: app/build/outputs/apk/debug/*.apk
+          path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
       - name: Upload checksums
         uses: actions/upload-artifact@v5
         with:
           name: sums-${{ matrix.package_variant }}
-          path: app/build/outputs/apk/debug/*_sha256sums
+          path: app/build/outputs/apk/release/*_sha256sums
           if-no-files-found: error
 
   publish:

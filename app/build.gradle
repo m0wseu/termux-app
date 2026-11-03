@@ -84,13 +84,29 @@ android {
             storePassword 'xrj45yWGLbsO7W0v'
             keyPassword 'xrj45yWGLbsO7W0v'
         }
+
+        // Release signing is supplied by CI from repository secrets, so that the private key is
+        // never committed. Local builds without these variables fall back to an unsigned APK.
+        release {
+            def releaseKeystorePath = System.getenv("TERMUX_KEYSTORE_PATH")
+            if (releaseKeystorePath) {
+                storeFile file(releaseKeystorePath)
+                storePassword System.getenv("TERMUX_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("TERMUX_KEY_ALIAS")
+                keyPassword System.getenv("TERMUX_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
-            minifyEnabled true
+            // R8 shrinking is on by default; set TERMUX_MINIFY_ENABLED=0 to ship an unshrunk build.
+            minifyEnabled (System.getenv("TERMUX_MINIFY_ENABLED") ?: "1") == "1"
             shrinkResources false // Reproducible builds
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (System.getenv("TERMUX_KEYSTORE_PATH")) {
+                signingConfig signingConfigs.release
+            }
         }
 
         debug {
