@@ -158,12 +158,7 @@ jobs:
       - name: Create release
         shell: bash {0}
         run: |
-          NOTES_FILE=".github/release-notes/${VERSION}.md"
-          if [ -f "$NOTES_FILE" ]; then
-              gh release create "$VERSION" --target master --title "$VERSION" --notes-file "$NOTES_FILE"
-          else
-              gh release create "$VERSION" --target master --title "$VERSION" --generate-notes
-          fi
+          gh release create "$VERSION" --target master --title "$VERSION" --notes ""
 
       - name: Upload APKs to release
         shell: bash {0}
