@@ -98,10 +98,12 @@ android {
         }
     }
 
+    // R8 shrinking is on by default; set TERMUX_MINIFY_ENABLED=0 to ship an unshrunk build.
+    def minifyReleaseBuilds = (System.getenv("TERMUX_MINIFY_ENABLED") ?: "1") == "1"
+
     buildTypes {
         release {
-            // R8 shrinking is on by default; set TERMUX_MINIFY_ENABLED=0 to ship an unshrunk build.
-            minifyEnabled (System.getenv("TERMUX_MINIFY_ENABLED") ?: "1") == "1"
+            minifyEnabled minifyReleaseBuilds
             shrinkResources false // Reproducible builds
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
             if (System.getenv("TERMUX_KEYSTORE_PATH")) {
