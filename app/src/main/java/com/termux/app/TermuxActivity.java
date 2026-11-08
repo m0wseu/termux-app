@@ -915,18 +915,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         // Session list changes and their notifications can originate from background threads (for
         // example when a session exits). Always refresh the adapter on the UI thread, and only
         // after taking a consistent snapshot of the service's session list.
-        runOnUiThread(() -> {
-            if (isFinishing() || isDestroyed()) return;
-            if (mTermuxSessionListViewController == null) return;
-
-            TermuxService service = getTermuxService();
-            if (service != null) {
-                mTermuxSessionListViewController.updateSessions(service.getTermuxSessions());
-            } else {
+      
                 mTermuxSessionListViewController.notifyDataSetChanged();
             }
-        });
-    }
 
     public boolean isVisible() {
         return mIsVisible;
