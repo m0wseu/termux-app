@@ -117,6 +117,33 @@ public final class TermuxPreferenceConstants {
         public static final String KEY_SOFT_KEYBOARD_ENABLED_ONLY_IF_NO_HARDWARE = "soft_keyboard_enabled_only_if_no_hardware";
         public static final boolean DEFAULT_VALUE_KEY_SOFT_KEYBOARD_ENABLED_ONLY_IF_NO_HARDWARE = false;
 
+        /**
+         * Defines the key for keyboard mode: 'standard', 'ime', or 'secure'.
+         */
+        public static final String KEY_KEYBOARD_MODE = "keyboard_mode";
+        public static final String VALUE_KEYBOARD_MODE_STANDARD = "standard";
+        public static final String VALUE_KEYBOARD_MODE_IME = "ime";
+        public static final String VALUE_KEYBOARD_MODE_SECURE = "secure";
+        public static final String DEFAULT_VALUE_KEY_KEYBOARD_MODE = VALUE_KEYBOARD_MODE_STANDARD;
+
+        /**
+         * Defines the key for what bare `Ctrl+V` does: 'off' sends it to the terminal, 'bracketed'
+         * pastes only if the program enabled bracketed paste mode (DECSET 2004), and 'always' always
+         * pastes. `Ctrl+Shift+V` always pastes, whatever this is set to.
+         */
+        public static final String KEY_CTRL_V_PASTE = "ctrl_v_paste";
+        public static final String VALUE_CTRL_V_PASTE_OFF = "off";
+        public static final String VALUE_CTRL_V_PASTE_BRACKETED = "bracketed";
+        public static final String VALUE_CTRL_V_PASTE_ALWAYS = "always";
+        public static final String DEFAULT_VALUE_KEY_CTRL_V_PASTE = VALUE_CTRL_V_PASTE_BRACKETED;
+
+        /**
+         * Defines the key for the width in dp of the left screen edge that the session drawer can be
+         * dragged open from. A value of 0 disables it.
+         */
+        public static final String KEY_DRAWER_GESTURE_EXCLUSION_WIDTH = "drawer_gesture_exclusion_width";
+        public static final int DEFAULT_VALUE_KEY_DRAWER_GESTURE_EXCLUSION_WIDTH = 20;
+
 
         /**
          * Defines the key for whether to always keep screen on.

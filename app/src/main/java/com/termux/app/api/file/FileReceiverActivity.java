@@ -21,6 +21,7 @@ import com.termux.shared.termux.interact.TextInputDialogUtils;
 import com.termux.shared.termux.TermuxConstants;
 import com.termux.shared.termux.TermuxConstants.TERMUX_APP;
 import com.termux.shared.termux.TermuxConstants.TERMUX_APP.TERMUX_SERVICE;
+import com.termux.shared.termux.data.TermuxUrlUtils;
 import com.termux.app.TermuxService;
 import com.termux.shared.logger.Logger;
 import com.termux.shared.termux.settings.properties.TermuxAppSharedProperties;
@@ -57,8 +58,14 @@ public class FileReceiverActivity extends AppCompatActivity {
     static boolean isSharedTextAnUrl(String sharedText) {
         if (sharedText == null || sharedText.isEmpty()) return false;
 
-        return Patterns.WEB_URL.matcher(sharedText).matches()
-            || Pattern.matches("magnet:\\?xt=urn:btih:.*?", sharedText);
+        // Patterns.WEB_URL only knows the common web schemes. Shared text may contain other
+        // valid URI schemes (sftp, smb, irc, gopher, ...), which must be sent to
+        // termux-url-opener instead of being saved as a text file. See issue #3935.
+        if (Patterns.WEB_URL.matcher(sharedText).matches()) return true;
+        if (TermuxUrlUtils.getUrlMatchRegex().matcher(sharedText).matches()) return true;
+
+        // Schemes that are valid URIs but do not use the "://" authority syntax.
+        return Pattern.matches("(?i)^(?:magnet|mailto|nfs|nzblnk|rtmp|jabber):\\S+$", sharedText);
     }
 
     @Override

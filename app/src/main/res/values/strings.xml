@@ -176,6 +176,9 @@
             <!-- Keyboard Category -->
             <string name="termux_keyboard_header">Keyboard</string>
 
+                <!-- Keyboard Mode -->
+                <string name="termux_keyboard_mode_title">Keyboard Mode</string>
+
                 <!-- Soft Keyboard -->
                 <string name="termux_soft_keyboard_enabled_title">Soft Keyboard Enabled</string>
                 <string name="termux_soft_keyboard_enabled_off">Soft keyboard will be disabled.</string>
@@ -187,6 +190,13 @@
                     hardware keyboard is connected. (Default)</string>
                 <string name="termux_soft_keyboard_enabled_only_if_no_hardware_on">Soft keyboard will be enabled only if
                     no hardware keyboard is connected.</string>
+
+
+            <!-- Clipboard Category -->
+            <string name="termux_clipboard_header">Clipboard</string>
+
+                <!-- Ctrl+V Paste -->
+                <string name="termux_ctrl_v_paste_title">Ctrl+V Paste</string>
 
 
         <!-- Terminal View Preferences -->
@@ -202,6 +212,9 @@
                 <string name="termux_terminal_view_terminal_margin_adjustment_on">Terminal margin adjustment will be enabled.
                     It should be enabled to try to fix the issue where soft keyboard covers part of extra keys/terminal view.
                     If it causes screen flickering on your devices, then disable it. (Default)</string>
+
+                <!-- Drawer Gesture Exclusion Width -->
+                <string name="termux_terminal_view_drawer_gesture_exclusion_width_title">Drawer Edge Gesture Width</string>
 
 
 

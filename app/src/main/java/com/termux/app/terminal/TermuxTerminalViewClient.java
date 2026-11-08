@@ -7,7 +7,6 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.media.AudioManager;
 import android.os.Environment;
-import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.InputDevice;
 import android.view.KeyEvent;
@@ -33,6 +32,8 @@ import com.termux.shared.models.ReportInfo;
 import com.termux.app.models.UserAction;
 import com.termux.app.terminal.io.KeyboardShortcut;
 import com.termux.shared.termux.settings.properties.TermuxPropertyConstants;
+import com.termux.shared.termux.settings.preferences.TermuxAppSharedPreferences;
+import com.termux.shared.termux.settings.preferences.TermuxPreferenceConstants;
 import com.termux.shared.data.DataUtils;
 import com.termux.shared.logger.Logger;
 import com.termux.shared.markdown.MarkdownUtils;
@@ -43,6 +44,7 @@ import com.termux.shared.view.ViewUtils;
 import com.termux.terminal.KeyHandler;
 import com.termux.terminal.TerminalEmulator;
 import com.termux.terminal.TerminalSession;
+import com.termux.view.TerminalView;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -123,6 +125,10 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             setTerminalCursorBlinkerState(true);
             mTerminalCursorBlinkerStateAlreadySet = true;
         }
+
+        // The keyboard mode may have been changed in the settings, restart the input connection so
+        // that the new `inputType` is reported to the IME.
+        mActivity.getTerminalView().restartInput();
     }
 
     /**
@@ -217,6 +223,25 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
     }
 
     @Override
+    public int getKeyboardMode() {
+        TermuxAppSharedPreferences preferences = mActivity.getPreferences();
+
+        // An explicitly set preference wins, so that the mode shown in the settings is the mode that
+        // is actually used. The `enforce-char-based-input` property is only used as the fallback for
+        // users that have set it and have not touched the preference.
+        if (preferences != null && preferences.isKeyboardModeSet()) {
+            String keyboardMode = preferences.getKeyboardMode();
+            if (TermuxPreferenceConstants.TERMUX_APP.VALUE_KEYBOARD_MODE_IME.equals(keyboardMode))
+                return KEYBOARD_MODE_IME;
+            if (TermuxPreferenceConstants.TERMUX_APP.VALUE_KEYBOARD_MODE_SECURE.equals(keyboardMode))
+                return KEYBOARD_MODE_SECURE;
+            return KEYBOARD_MODE_STANDARD;
+        }
+
+        return shouldEnforceCharBasedInput() ? KEYBOARD_MODE_SECURE : KEYBOARD_MODE_STANDARD;
+    }
+
+    @Override
     public boolean shouldUseCtrlSpaceWorkaround() {
         return mActivity.getProperties().isUsingCtrlSpaceWorkaround();
     }
@@ -235,6 +260,29 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
     }
 
 
+
+    /**
+     * Copy the selection instead of letting the terminal send `SIGINT` for `Ctrl+C`, like desktop
+     * terminals do, since the selection menu is not reachable while typing. Called before
+     * {@link TerminalView} clears the selection, which is why it cannot be done in
+     * {@link #onKeyDown(int, KeyEvent, TerminalSession)}.
+     */
+    @Override
+    public boolean onKeyDownWhileSelectingText(int keyCode, KeyEvent e) {
+        return !mActivity.getProperties().areHardwareKeyboardShortcutsDisabled() &&
+            !e.isAltPressed() && e.isCtrlPressed() &&
+            Character.toLowerCase(e.getUnicodeChar(0)) == 'c' &&
+            mActivity.getTerminalView().copySelectionToClipboard();
+    }
+
+    @Override
+    public boolean onTextInputWhileSelectingText(CharSequence text, boolean controlDown) {
+        // Text input cannot carry the modifier keys, so only the Ctrl latched on the extra keys bar
+        // can be checked. A paste may also need Shift, so it is read too.
+        if (!controlDown || text.length() != 1) return false;
+        if (mActivity.getProperties().areHardwareKeyboardShortcutsDisabled()) return false;
+        return onClipboardShortcut(text.charAt(0), readShiftKey());
+    }
 
     @SuppressLint("RtlHardcoded")
     @Override
@@ -278,9 +326,19 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             } else if (unicodeChar >= '1' && unicodeChar <= '9') {
                 int index = unicodeChar - '1';
                 mTermuxTerminalSessionActivityClient.switchToSession(index);
+            } else {
+                return false;
             }
             return true;
         }
+
+        // Paste on `Ctrl+Shift+V` instead of letting the terminal send `SYN` for it, like the
+        // `Ctrl+Alt+V` shortcut above does. This runs before the key is mapped to a control
+        // character below.
+        if (!mActivity.getProperties().areHardwareKeyboardShortcutsDisabled() &&
+            !e.isAltPressed() && e.isCtrlPressed() &&
+            Character.toLowerCase(e.getUnicodeChar(0)) == 'v' && onPasteShortcut(e.isShiftPressed()))
+            return true;
 
         return false;
 
@@ -359,6 +417,13 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
 
     @Override
     public boolean onCodePoint(final int codePoint, boolean ctrlDown, TerminalSession session) {
+        // The extra keys bar delivers the character of a key instead of a `KeyEvent`, so the clipboard
+        // shortcuts of `onKeyDown()` are handled here for it. Only `c` and `v` are checked, since
+        // reading the sticky `Shift` of the bar clears it.
+        if (ctrlDown && (codePoint == 'c' || codePoint == 'C' || codePoint == 'v' || codePoint == 'V') &&
+            onClipboardShortcut(codePoint, readShiftKey()))
+            return true;
+
         if (mVirtualFnKeyDown) {
             int resultingKeyCode = -1;
             int resultingCodePoint = -1;
@@ -575,8 +640,15 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
         // theme. For android 8.+, the "defaultFocusHighlightEnabled" attribute is also set to false
         // in TerminalView layout to fix the issue.
 
+        final boolean textInputViewSelected = mActivity.isTerminalToolbarTextInputViewSelected();
+        final boolean imeKeyboardMode = getKeyboardMode() == KEYBOARD_MODE_IME;
+
+        // The terminal view must not be made non IME focusable if the toolbar text input view is
+        // selected or if the keyboard mode is `ime`, since the IME must be able to attach to the
+        // terminal view for text to be committed to it.
+
         // If soft keyboard is disabled by user for Termux (check function docs for Termux behaviour info)
-        if (KeyboardUtils.shouldSoftKeyboardBeDisabled(mActivity,
+        if (!textInputViewSelected && !imeKeyboardMode && KeyboardUtils.shouldSoftKeyboardBeDisabled(mActivity,
             mActivity.getPreferences().isSoftKeyboardEnabled(),
             mActivity.getPreferences().isSoftKeyboardEnabledOnlyIfNoHardware())) {
             Logger.logVerbose(LOG_TAG, "Maintaining disabled soft keyboard");
@@ -595,14 +667,24 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             // Clear any previous flags to disable soft keyboard in case setting updated
             KeyboardUtils.clearDisableSoftKeyboardFlags(mActivity);
 
+            // The flags that disable the soft keyboard cannot be set in `ime` keyboard mode, since
+            // that would also make the terminal view non IME focusable. Hide the soft keyboard
+            // instead if the user does not want it shown.
+            if (imeKeyboardMode && KeyboardUtils.shouldSoftKeyboardBeDisabled(mActivity,
+                mActivity.getPreferences().isSoftKeyboardEnabled(),
+                mActivity.getPreferences().isSoftKeyboardEnabledOnlyIfNoHardware())) {
+                Logger.logVerbose(LOG_TAG, "Hiding soft keyboard for ime keyboard mode");
+                KeyboardUtils.hideSoftKeyboard(mActivity, mActivity.getTerminalView());
+                noShowKeyboard = true;
+            }
             // If soft keyboard is to be hidden on startup
-            if (isStartup && mActivity.getProperties().shouldSoftKeyboardBeHiddenOnStartup()) {
+            else if (isStartup && mActivity.getProperties().shouldSoftKeyboardBeHiddenOnStartup()) {
                 Logger.logVerbose(LOG_TAG, "Hiding soft keyboard on startup");
                 // Required to keep keyboard hidden when Termux app is switched back from another app
                 KeyboardUtils.setSoftKeyboardAlwaysHiddenFlags(mActivity);
 
                 KeyboardUtils.hideSoftKeyboard(mActivity, mActivity.getTerminalView());
-                mActivity.getTerminalView().requestFocus();
+                if (!textInputViewSelected) mActivity.getTerminalView().requestFocus();
                 noShowKeyboard = true;
                 // Required to keep keyboard hidden on app startup
                 mShowSoftKeyboardIgnoreOnce = true;
@@ -618,7 +700,13 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
                 final EditText textInputView =  mActivity.findViewById(R.id.terminal_toolbar_text_input);
                 if (textInputView != null) textInputViewHasFocus = textInputView.hasFocus();
 
-                if (hasFocus || textInputViewHasFocus) {
+                // Do not request the soft keyboard while it is disabled for the window, otherwise an
+                // empty IME window may be created and left behind as a blurred overlay. This is the
+                // same check that `onSingleTapUp()` uses before showing the soft keyboard.
+                final boolean shouldShow = (hasFocus || textInputViewHasFocus) &&
+                    !KeyboardUtils.areDisableSoftKeyboardFlagsSet(mActivity);
+
+                if (shouldShow) {
                     if (mShowSoftKeyboardIgnoreOnce) {
                         mShowSoftKeyboardIgnoreOnce = false; return;
                     }
@@ -627,7 +715,7 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
                     Logger.logVerbose(LOG_TAG, "Hiding soft keyboard on focus change");
                 }
 
-                KeyboardUtils.setSoftKeyboardVisibility(getShowSoftKeyboardRunnable(), mActivity, mActivity.getTerminalView(), hasFocus || textInputViewHasFocus);
+                KeyboardUtils.setSoftKeyboardVisibility(getShowSoftKeyboardRunnable(), mActivity, mActivity.getTerminalView(), shouldShow);
             }
         });
 
@@ -797,6 +885,52 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
         String text = ShareUtils.getTextStringFromClipboardIfSet(mActivity, true);
         if (text != null)
             session.getEmulator().paste(text);
+    }
+
+    /**
+     * Paste if the key is a paste shortcut, otherwise leave the key to the terminal. `Ctrl+Shift+V`
+     * always pastes, while bare `Ctrl+V` is left to the terminal unless the `Ctrl+V Paste` setting
+     * says otherwise, since it is a real key combination for some programs, like the block selection
+     * in vim.
+     *
+     * @param shiftDown Whether `Shift` was pressed.
+     * @return {@code true} if the key was consumed.
+     */
+    private boolean onPasteShortcut(boolean shiftDown) {
+        if (!shiftDown && !shouldPasteOnBareCtrlV()) return false;
+        doPaste();
+        return true;
+    }
+
+    /**
+     * Whether bare `Ctrl+V` should paste instead of being sent to the terminal, as defined by the
+     * {@link TermuxPreferenceConstants.TERMUX_APP#KEY_CTRL_V_PASTE} preference.
+     */
+    private boolean shouldPasteOnBareCtrlV() {
+        switch (mActivity.getPreferences().getCtrlVPasteMode()) {
+            case TermuxPreferenceConstants.TERMUX_APP.VALUE_CTRL_V_PASTE_ALWAYS:
+                return true;
+            case TermuxPreferenceConstants.TERMUX_APP.VALUE_CTRL_V_PASTE_BRACKETED:
+                TerminalSession session = mActivity.getCurrentSession();
+                return session != null && session.getEmulator() != null && session.getEmulator().isBracketedPasteEnabled();
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Handle the clipboard shortcuts for a key that arrives as a character instead of a
+     * {@link KeyEvent}, like the keys of the extra keys bar.
+     *
+     * @param codePoint The unmodified character of the key, like {@code 'v'}.
+     * @param shiftDown Whether `Shift` was pressed.
+     * @return {@code true} if the key was consumed.
+     */
+    private boolean onClipboardShortcut(int codePoint, boolean shiftDown) {
+        char c = Character.toLowerCase((char) codePoint);
+        if (c == 'c') return mActivity.getTerminalView().copySelectionToClipboard();
+        if (c == 'v') return onPasteShortcut(shiftDown);
+        return false;
     }
 
 }
