@@ -32,6 +32,22 @@ public interface TerminalViewClient {
 
     boolean shouldEnforceCharBasedInput();
 
+    /** The {@code inputType} passed to the IME is {@link android.text.InputType#TYPE_NULL}. */
+    int KEYBOARD_MODE_STANDARD = 0;
+    /** The {@code inputType} passed to the IME is normal text input, for IMEs that need a real text field. */
+    int KEYBOARD_MODE_IME = 1;
+    /** The {@code inputType} passed to the IME is a visible password, which disables suggestions. */
+    int KEYBOARD_MODE_SECURE = 2;
+
+    /**
+     * The keyboard mode that defines the {@code inputType} reported to the IME. Defaults to
+     * {@link #KEYBOARD_MODE_SECURE} if {@link #shouldEnforceCharBasedInput()} is {@code true}, and
+     * to {@link #KEYBOARD_MODE_STANDARD} otherwise.
+     */
+    default int getKeyboardMode() {
+        return shouldEnforceCharBasedInput() ? KEYBOARD_MODE_SECURE : KEYBOARD_MODE_STANDARD;
+    }
+
     boolean shouldUseCtrlSpaceWorkaround();
 
     boolean isTerminalViewSelected();
@@ -43,6 +59,30 @@ public interface TerminalViewClient {
 
 
     boolean onKeyDown(int keyCode, KeyEvent e, TerminalSession session);
+
+    /**
+     * Called from {@link TerminalView#onKeyDown(int, KeyEvent)} when a key is pressed while text is
+     * selected, before the selection is cleared, so that the client can act on the selected text.
+     *
+     * @return {@code true} if the key was consumed, otherwise {@code false} to let the selection be
+     * cleared and the key be processed as usual.
+     */
+    default boolean onKeyDownWhileSelectingText(int keyCode, KeyEvent e) {
+        return false;
+    }
+
+    /**
+     * Called from {@link TerminalView} when text is about to be written to the terminal while text
+     * is selected, before the selection is cleared. The counterpart of
+     * {@link #onKeyDownWhileSelectingText(int, KeyEvent)} for input that does not arrive as a
+     * {@link KeyEvent}, like text committed by the IME.
+     *
+     * @return {@code true} if the text was consumed, otherwise {@code false} to let the selection be
+     * cleared and the text be written as usual.
+     */
+    default boolean onTextInputWhileSelectingText(CharSequence text, boolean controlDown) {
+        return false;
+    }
 
     boolean onKeyUp(int keyCode, KeyEvent e);
 

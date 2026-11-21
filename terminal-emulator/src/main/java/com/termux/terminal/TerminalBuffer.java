@@ -152,6 +152,10 @@ public final class TerminalBuffer {
             if (rowLineWrap && x2 == columns) {
                 // If the line was wrapped, we shouldn't lose trailing space:
                 lastPrintingCharIndex = x2Index - 1;
+                // Unless the wrap was caused by a wide character that did not fit in the last column
+                // and was moved to the next row, which leaves a blank that is not part of the text.
+                if (isLineWrapBeforeWideChar(row) && isBlankCell(lineObject, columns - 1))
+                    lastPrintingCharIndex = lineObject.findStartOfColumn(columns - 1) - 1;
             } else {
                 for (i = x1Index; i < x2Index; ++i) {
                     char c = line[i];
@@ -176,7 +180,9 @@ public final class TerminalBuffer {
         // is called with y=5, then y1 would be set to 4 and y2 would be set to 6.
         int y1 = y;
         int y2 = y;
-        while (y1 > 0 && !getSelectedText(0, y1 - 1, mColumns, y, true, true).contains("\n")) {
+        // y1 may expand into transcript rows (negative external rows) so that
+        // tapping the visible tail of a wrapped line still finds its head.
+        while (y1 > -getActiveTranscriptRows() && !getSelectedText(0, y1 - 1, mColumns, y, true, true).contains("\n")) {
             y1--;
         }
         while (y2 < mScreenRows && !getSelectedText(0, y, mColumns, y2 + 1, true, true).contains("\n")) {
@@ -245,16 +251,37 @@ public final class TerminalBuffer {
         return (internalRow < 0) ? (mTotalRows + internalRow) : (internalRow % mTotalRows);
     }
 
-    public void setLineWrap(int row) {
-        mLines[externalToInternalRow(row)].mLineWrap = true;
+    /**
+     * Mark the row as line wrapped.
+     *
+     * @param row a row in the external coordinate system.
+     * @param beforeWideChar Whether the wrap happened because a wide character did not fit in the last
+     *                       column and was moved to the next row.
+     */
+    public void setLineWrap(int row, boolean beforeWideChar) {
+        TerminalRow line = mLines[externalToInternalRow(row)];
+        line.mLineWrap = true;
+        line.mLineWrapBeforeWideChar = beforeWideChar;
     }
 
     public boolean getLineWrap(int row) {
         return mLines[externalToInternalRow(row)].mLineWrap;
     }
 
+    /** Whether the row was line wrapped because a wide character did not fit in the last column. */
+    private boolean isLineWrapBeforeWideChar(int row) {
+        return mLines[externalToInternalRow(row)].mLineWrapBeforeWideChar;
+    }
+
+    private static boolean isBlankCell(TerminalRow line, int column) {
+        int index = line.findStartOfColumn(column);
+        return index >= line.getSpaceUsed() || line.mText[index] == ' ';
+    }
+
     public void clearLineWrap(int row) {
-        mLines[externalToInternalRow(row)].mLineWrap = false;
+        TerminalRow line = mLines[externalToInternalRow(row)];
+        line.mLineWrap = false;
+        line.mLineWrapBeforeWideChar = false;
     }
 
     /**
@@ -373,7 +400,7 @@ public final class TerminalBuffer {
 
                     // Line wrap as necessary:
                     if (currentOutputExternalColumn + displayWidth > mColumns) {
-                        setLineWrap(currentOutputExternalRow);
+                        setLineWrap(currentOutputExternalRow, currentOutputExternalColumn == mColumns - 1 && displayWidth == 2);
                         if (currentOutputExternalRow == mScreenRows - 1) {
                             if (newCursorPlaced) newCursorRow--;
                             scrollDownOneLine(0, mScreenRows, currentStyle);

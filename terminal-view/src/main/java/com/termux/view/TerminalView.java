@@ -7,6 +7,7 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.graphics.Canvas;
+import android.graphics.Matrix;
 import android.graphics.Typeface;
 import android.os.Build;
 import android.os.Handler;
@@ -30,8 +31,10 @@ import android.view.accessibility.AccessibilityManager;
 import android.view.autofill.AutofillManager;
 import android.view.autofill.AutofillValue;
 import android.view.inputmethod.BaseInputConnection;
+import android.view.inputmethod.CursorAnchorInfo;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.Scroller;
 
 import androidx.annotation.Nullable;
@@ -85,6 +88,25 @@ public final class TerminalView extends View {
 
     /** If non-zero, this is the last unicode code point received if that was a combining character. */
     int mCombiningAccent;
+
+    /**
+     * The currently active {@link BaseInputConnection} created in
+     * {@link #onCreateInputConnection(EditorInfo)}, or {@code null} if none has been created yet.
+     * Used to reach the local {@link Editable} that holds in-progress IME composing text, which
+     * must be committed before input that bypasses the IME is written to the terminal.
+     */
+    private BaseInputConnection mInputConnection;
+
+    /**
+     * The cursor update mode last requested by the IME via
+     * {@link InputConnection#requestCursorUpdates(int)}. A non-zero
+     * {@link InputConnection#CURSOR_UPDATE_MONITOR} means that the cursor anchor info must be kept
+     * up to date as the terminal content changes.
+     */
+    private int mCursorUpdateMode;
+
+    /** Whether a cursor anchor info update has already been posted for the next frame. */
+    private boolean mCursorAnchorInfoUpdatePending;
 
     /**
      * The current AutoFill type returned for {@link View#getAutofillType()} by {@link #getAutofillType()}.
@@ -307,12 +329,26 @@ public final class TerminalView extends View {
 
     @Override
     public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
+        // The IME has to request cursor updates again for the new connection, like TextView does.
+        mCursorUpdateMode = 0;
+
         // Ensure that inputType is only set if TerminalView is selected view with the keyboard and
         // an alternate view is not selected, like an EditText. This is necessary if an activity is
         // initially started with the alternate view or if activity is returned to from another app
         // and the alternate view was the one selected the last time.
         if (mClient.isTerminalViewSelected()) {
-            if (mClient.shouldEnforceCharBasedInput()) {
+            final int keyboardMode = mClient.getKeyboardMode();
+            if (keyboardMode == TerminalViewClient.KEYBOARD_MODE_IME) {
+                // Report a real text field so that IMEs that need one, like CJK IMEs for candidate
+                // selection, provide full composition and candidate UI. The composing text is kept
+                // in the local editable of the input connection below and is only sent to the
+                // terminal once it is committed, so no partial text reaches the terminal.
+                // NO_SUGGESTIONS keeps the IME from showing its autocorrect/suggestion strip, which
+                // does not apply to terminal input, but leaves composing and the CJK candidate bar
+                // alone. A visible password field would suppress suggestions too, but it disables
+                // composing as well, which breaks CJK input.
+                outAttrs.inputType = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_NORMAL | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
+            } else if (keyboardMode == TerminalViewClient.KEYBOARD_MODE_SECURE) {
                 // Some keyboards seems do not reset the internal state on TYPE_NULL.
                 // Affects mostly Samsung stock keyboards.
                 // https://github.com/termux/termux-app/issues/686
@@ -338,9 +374,22 @@ public final class TerminalView extends View {
 
         // Note that IME_ACTION_NONE cannot be used as that makes it impossible to input newlines using the on-screen
         // keyboard on Android TV (see https://github.com/termux/termux-app/issues/221).
-        outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN;
+        // IME_FLAG_NO_EXTRACT_UI stops the IME from showing its full-screen/half-screen extracted text overlay over
+        // the terminal in landscape or large screen mode, where the terminal itself is already big enough.
+        outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN | EditorInfo.IME_FLAG_NO_EXTRACT_UI;
 
-        return new BaseInputConnection(this, true) {
+        mInputConnection = new BaseInputConnection(this, true) {
+
+            @Override
+            public boolean requestCursorUpdates(int cursorUpdateMode) {
+                if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) {
+                    mClient.logInfo(LOG_TAG, "IME: requestCursorUpdates(" + cursorUpdateMode + ")");
+                }
+                mCursorUpdateMode = cursorUpdateMode;
+                if ((cursorUpdateMode & InputConnection.CURSOR_UPDATE_IMMEDIATE) != 0)
+                    updateCursorAnchorInfo();
+                return true;
+            }
 
             @Override
             public boolean finishComposingText() {
@@ -379,6 +428,13 @@ public final class TerminalView extends View {
             }
 
             void sendTextToTerminal(CharSequence text) {
+                // Ctrl may be latched on the extra keys bar, and reading it clears it, so it is read
+                // once here and passed on to inputCodePoint() below.
+                final boolean controlDown = mClient.readControlKey();
+                // The client may want to act on the selected text, like copying it on Ctrl+C, and it
+                // has to get the chance before the selection is cleared below. Key events get the
+                // same chance in onKeyDown().
+                if (isSelectingText() && mClient.onTextInputWhileSelectingText(text, controlDown)) return;
                 stopTextSelectionMode();
                 final int textLengthInChars = text.length();
                 for (int i = 0; i < textLengthInChars; i++) {
@@ -430,11 +486,85 @@ public final class TerminalView extends View {
                         }
                     }
 
-                    inputCodePoint(KEY_EVENT_SOURCE_SOFT_KEYBOARD, codePoint, ctrlHeld, false);
+                    inputCodePoint(KEY_EVENT_SOURCE_SOFT_KEYBOARD, codePoint, ctrlHeld || controlDown, false);
                 }
             }
 
         };
+        return mInputConnection;
+    }
+
+    /**
+     * Commit any in-progress IME composing text before input that bypasses the IME is written to the
+     * terminal, so that it is not committed after that input. Called from
+     * {@link #onKeyDown(int, KeyEvent)} and {@link #inputCodePoint(int, int, boolean, boolean)}, the
+     * two entry points that do not go through the input connection.
+     *
+     * The composing span is set by {@link BaseInputConnection#setComposingText(CharSequence, int)}
+     * and removed by {@link BaseInputConnection#finishComposingText()}, so it is both the "is
+     * composing" signal and the guard against recursing back here from the
+     * {@link #inputCodePoint(int, int, boolean, boolean)} calls that committing makes.
+     */
+    private void finalizeComposingIfActive() {
+        if (mInputConnection == null) return;
+        final Editable editable = mInputConnection.getEditable();
+        if (BaseInputConnection.getComposingSpanStart(editable) < 0) return;
+        mInputConnection.finishComposingText();
+        // Some IMEs keep the committed text in their own composing buffer, so restart the input
+        // connection to make them drop it.
+        post(this::restartInput);
+    }
+
+    /**
+     * Report the terminal cursor position and the view coordinates to the IME, so that IME windows
+     * like the candidate bar can be shown next to the terminal cursor instead of at the bottom of the
+     * screen. Only called if the IME requested cursor updates via
+     * {@link InputConnection#requestCursorUpdates(int)}.
+     */
+    private void updateCursorAnchorInfo() {
+        if (mEmulator == null || mRenderer == null) return;
+
+        InputMethodManager imm = (InputMethodManager) getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+        if (imm == null) return;
+
+        final int visibleRow = mEmulator.getCursorRow() - mTopRow;
+        CursorAnchorInfo.Builder builder = new CursorAnchorInfo.Builder();
+        if (visibleRow >= 0 && visibleRow < mEmulator.mRows) {
+            // Use the same geometry as `TerminalRenderer`, where the baseline of a row is at
+            // `(row + 1) * mFontLineSpacing` and its cell is `mFontLineSpacing` high and starts at
+            // `mFontLineSpacingAndAscent` above the baseline.
+            final float left = mEmulator.getCursorCol() * mRenderer.mFontWidth;
+            final float top = visibleRow * mRenderer.mFontLineSpacing + mRenderer.mFontLineSpacingAndAscent;
+            final float bottom = top + mRenderer.mFontLineSpacing;
+            final float baseline = (visibleRow + 1) * mRenderer.mFontLineSpacing;
+            builder.setInsertionMarkerLocation(left, top, baseline, bottom, CursorAnchorInfo.FLAG_HAS_VISIBLE_REGION);
+        } else {
+            // The cursor is scrolled out of view, so there is nothing for the IME to anchor to.
+            builder.setInsertionMarkerLocation(0, 0, 0, 0, CursorAnchorInfo.FLAG_HAS_INVISIBLE_REGION);
+        }
+
+        // The IME expects the insertion marker in view local coordinates, so that the matrix maps
+        // them to screen coordinates.
+        Matrix matrix = new Matrix(getMatrix());
+        int[] location = new int[2];
+        getLocationOnScreen(location);
+        matrix.postTranslate(location[0], location[1]);
+        builder.setMatrix(matrix);
+
+        imm.updateCursorAnchorInfo(this, builder.build());
+    }
+
+    /**
+     * Post a cursor anchor info update for the next frame, coalescing the updates of a frame into a
+     * single one, since the terminal content can change many times per frame.
+     */
+    private void scheduleCursorAnchorInfoUpdate() {
+        if (mCursorAnchorInfoUpdatePending) return;
+        mCursorAnchorInfoUpdatePending = true;
+        postOnAnimation(() -> {
+            mCursorAnchorInfoUpdatePending = false;
+            updateCursorAnchorInfo();
+        });
     }
 
     @Override
@@ -458,6 +588,9 @@ public final class TerminalView extends View {
 
     public void onScreenUpdated(boolean skipScrolling) {
         if (mEmulator == null) return;
+
+        if ((mCursorUpdateMode & InputConnection.CURSOR_UPDATE_MONITOR) != 0)
+            scheduleCursorAnchorInfoUpdate();
 
         int rowsInHistory = mEmulator.getScreen().getActiveTranscriptRows();
         if (mTopRow < -rowsInHistory) setTopRow(-rowsInHistory);
@@ -771,7 +904,17 @@ public final class TerminalView extends View {
         if (TERMINAL_VIEW_KEY_LOGGING_ENABLED)
             mClient.logInfo(LOG_TAG, "onKeyDown(keyCode=" + keyCode + ", isSystem()=" + event.isSystem() + ", event=" + event + ")");
         if (mEmulator == null) return true;
+        // Input from a hardware keyboard or the extra keys bar bypasses the IME, so commit an
+        // in-progress composition first. Modifier keys must not, or pressing shift to compose a CJK
+        // double consonant would commit the syllable in progress.
+        if (!KeyEvent.isModifierKey(keyCode)) finalizeComposingIfActive();
         if (isSelectingText()) {
+            // The client gets the key before the selection is cleared below, so that it can act on
+            // the selected text, like copying it on Ctrl+C.
+            if (mClient.onKeyDownWhileSelectingText(keyCode, event)) {
+                invalidate();
+                return true;
+            }
             stopTextSelectionMode();
         }
 
@@ -851,6 +994,9 @@ public final class TerminalView extends View {
         }
 
         if (mTermSession == null) return;
+
+        // Same as onKeyDown(), for input that does not go through a key event, like the extra keys bar.
+        finalizeComposingIfActive();
 
         // Ensure cursor is shown when a key is pressed down like long hold on (arrow) keys
         if (mEmulator != null)
@@ -1407,6 +1553,19 @@ public final class TerminalView extends View {
             return null;
     }
 
+    /**
+     * Copy the selected text to the clipboard and stop selecting, like the Copy action of the
+     * selection menu does.
+     *
+     * @return {@code true} if text was selected, otherwise {@code false}.
+     */
+    public boolean copySelectionToClipboard() {
+        if (!isSelectingText()) return false;
+        mTermSession.onCopyTextToClipboard(getSelectedText());
+        stopTextSelectionMode();
+        return true;
+    }
+
     /** Get the selected text stored before "MORE" button was pressed on the context menu. */
     @Nullable
     public String getStoredSelectedText() {
@@ -1515,6 +1674,17 @@ public final class TerminalView extends View {
                     showFloatingToolbar();
             }
         }
+    }
+
+    /**
+     * Restart the input connection so that the attributes returned by
+     * {@link #onCreateInputConnection(EditorInfo)}, like the {@code inputType} defined by
+     * {@link TerminalViewClient#getKeyboardMode()}, are reported to the IME again. Must be called
+     * when the keyboard mode is changed.
+     */
+    public void restartInput() {
+        InputMethodManager imm = (InputMethodManager) getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+        if (imm != null) imm.restartInput(this);
     }
 
 }

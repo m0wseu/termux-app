@@ -12,6 +12,7 @@ import androidx.viewpager.widget.ViewPager;
 import com.termux.R;
 import com.termux.app.TermuxActivity;
 import com.termux.shared.termux.extrakeys.ExtraKeysView;
+import com.termux.shared.view.KeyboardUtils;
 import com.termux.terminal.TerminalSession;
 
 public class TerminalToolbarViewPager {
@@ -47,6 +48,8 @@ public class TerminalToolbarViewPager {
                 extraKeysView.setExtraKeysViewClient(mActivity.getTermuxTerminalExtraKeys());
                 extraKeysView.setButtonTextAllCaps(mActivity.getProperties().shouldExtraKeysTextBeAllCaps());
                 mActivity.setExtraKeysView(extraKeysView);
+                if (mActivity.getTerminalToolbarTextColor() != 0)
+                    extraKeysView.setButtonTextColor(mActivity.getTerminalToolbarTextColor());
                 extraKeysView.reload(mActivity.getTermuxTerminalExtraKeys().getExtraKeysInfo(),
                     mActivity.getTerminalToolbarDefaultHeight());
 
@@ -58,6 +61,8 @@ public class TerminalToolbarViewPager {
             } else {
                 layout = inflater.inflate(R.layout.view_terminal_toolbar_text_input, collection, false);
                 final EditText editText = layout.findViewById(R.id.terminal_toolbar_text_input);
+                if (mActivity.getTerminalToolbarTextColor() != 0)
+                    editText.setTextColor(mActivity.getTerminalToolbarTextColor());
 
                 if (mSavedTextInput != null) {
                     editText.setText(mSavedTextInput);
@@ -69,8 +74,14 @@ public class TerminalToolbarViewPager {
                     if (session != null) {
                         if (session.isRunning()) {
                             String textToSend = editText.getText().toString();
-                            if (textToSend.length() == 0) textToSend = "\r";
-                            session.write(textToSend);
+                            if (textToSend.length() == 0) {
+                                // The empty input is the enter key.
+                                session.write("\r");
+                            } else {
+                                // Send the text as a paste like the other paste paths do, so that
+                                // programs that enabled bracketed paste mode receive it in one go.
+                                session.getEmulator().paste(textToSend);
+                            }
                         } else {
                             mActivity.getTermuxTerminalSessionClient().removeFinishedSession(session);
                         }
@@ -107,6 +118,9 @@ public class TerminalToolbarViewPager {
             if (position == 0) {
                 mActivity.getTerminalView().requestFocus();
             } else {
+                // The flags that disable the soft keyboard may be set for the terminal view, but the
+                // text input view can only be typed into if the window is IME focusable.
+                KeyboardUtils.clearDisableSoftKeyboardFlags(mActivity);
                 final EditText editText = mTerminalToolbarViewPager.findViewById(R.id.terminal_toolbar_text_input);
                 if (editText != null) editText.requestFocus();
             }

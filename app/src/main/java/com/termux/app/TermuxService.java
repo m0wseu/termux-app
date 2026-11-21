@@ -647,10 +647,14 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
             if (executionCommand != null && executionCommand.isPluginExecutionCommand)
                 TermuxPluginUtils.processPluginExecutionCommandResult(this, LOG_TAG, executionCommand);
 
-            mShellManager.mTermuxSessions.remove(termuxSession);
+            // This callback can run on a background thread, so synchronize the mutation with
+            // getTermuxSessions() which returns a snapshot to the UI.
+            synchronized (this) {
+                mShellManager.mTermuxSessions.remove(termuxSession);
+            }
 
             // Notify {@link TermuxSessionsListViewController} that sessions list has been updated if
-            // activity in is foreground
+            // activity in is foreground. The activity will marshal the notification to the UI thread.
             if (mTermuxTerminalSessionActivityClient != null)
                 mTermuxTerminalSessionActivityClient.termuxSessionListNotifyUpdated();
         }
@@ -879,7 +883,9 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
     }
 
     public synchronized List<TermuxSession> getTermuxSessions() {
-        return mShellManager.mTermuxSessions;
+        // Return a snapshot so that callers (like the sessions ListView adapter) do not iterate
+        // the live list while another thread adds or removes sessions.
+        return new ArrayList<>(mShellManager.mTermuxSessions);
     }
 
     @Nullable

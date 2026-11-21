@@ -4,6 +4,14 @@
         app:key="keyboard"
         app:title="@string/termux_keyboard_header">
 
+        <ListPreference
+            app:key="keyboard_mode"
+            app:title="@string/termux_keyboard_mode_title"
+            app:entries="@array/keyboard_mode_entries"
+            app:entryValues="@array/keyboard_mode_entry_values"
+            app:defaultValue="standard"
+            app:useSimpleSummaryProvider="true" />
+
         <SwitchPreferenceCompat
             app:key="soft_keyboard_enabled"
             app:summaryOff="@string/termux_soft_keyboard_enabled_off"
@@ -15,6 +23,20 @@
             app:summaryOff="@string/termux_soft_keyboard_enabled_only_if_no_hardware_off"
             app:summaryOn="@string/termux_soft_keyboard_enabled_only_if_no_hardware_on"
             app:title="@string/termux_soft_keyboard_enabled_only_if_no_hardware_title" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        app:key="clipboard"
+        app:title="@string/termux_clipboard_header">
+
+        <ListPreference
+            app:key="ctrl_v_paste"
+            app:title="@string/termux_ctrl_v_paste_title"
+            app:entries="@array/ctrl_v_paste_entries"
+            app:entryValues="@array/ctrl_v_paste_entry_values"
+            app:defaultValue="bracketed"
+            app:useSimpleSummaryProvider="true" />
 
     </PreferenceCategory>
 
